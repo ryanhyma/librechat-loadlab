@@ -1,0 +1,3 @@
+{"name":"failtest","users":2,"ramp_s":1,"duration_s":8,"think_ms":150,
+ "mix":{"agentrag":{"weight":1,"think_ms":150}},
+ "target":{"endpoint":"loadlabstub","model":"loadlab-stub"},"probe_meili":false,"probe_rag":false}

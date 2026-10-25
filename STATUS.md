@@ -67,3 +67,13 @@ Measured on dev (stub LLM = app-tier capacity, no GPU in the loop), 8 users / 15
 4. Load ladder/soak presets exist as config only; no automatic "find the knee" sweep yet.
 5. `docker restart LibreChat` is the dev restart path; production uses the `.env` `LOADLAB_RESTART_CMD`
    (nssm/sc.exe).
+
+
+## Partial-state guardrails (added late)
+
+- Purge is fail-closed: users deleted last, only after vectors/Meili/uploads/rows verify zero.
+  Proven: with rag_api stopped, purge refused (`ok=false, retryable=true`) and kept users + vectors;
+  after restart, one retry cleared everything to zero.
+- Ledger heartbeat (30 s) + `purge --stale` sweeper (also runs at `serve` startup, grace 900 s).
+- `env guard` restores a test `.env` left applied by a crash (SHA-256 verified).
+- Schedule both every 15 min (see docs/setup.md §5).

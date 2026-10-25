@@ -17,7 +17,7 @@ import httpx
 from bson import ObjectId
 from pymongo import MongoClient
 
-from .config import UA, RunConfig
+from .config import UA, RunConfig, Target
 from .ledger import Ledger
 
 MEILI_INDEXES = {"messages": "messageId", "convos": "conversationId"}
@@ -53,6 +53,8 @@ class PurgeResult:
     steps: list[dict[str, Any]] = field(default_factory=list)
     residue: dict[str, Any] = field(default_factory=dict)
     ok: bool = False
+    retryable: bool = False
+    errors: list[str] = field(default_factory=list)
 
 
 class Purge:
@@ -89,7 +91,7 @@ class Purge:
         file_ids |= {f["file_id"] for f in self.ledger.get("files", []) if f.get("file_id")}
         meili_msgs = set(self.ledger.get("meili", {}).get("messages", [])) | set(msg_ids)
         meili_convos = set(self.ledger.get("meili", {}).get("convos", [])) | set(conv_ids)
-        return {
+        ids = {
             "user_ids": user_ids,
             "user_strs": user_strs,
             "conversations": conv_ids,
@@ -97,6 +99,40 @@ class Purge:
             "files": sorted(file_ids),
             "meili": {"messages": sorted(meili_msgs), "convos": sorted(meili_convos)},
         }
+        # a previous interrupted purge leaves a manifest; union it so a retry can still
+        # reach objects whose Mongo rows are already gone
+        manifest = self.manifest_path()
+        if manifest.exists():
+            try:
+                old = json.loads(manifest.read_text())
+                ids["user_strs"] = sorted(set(ids["user_strs"]) | set(old.get("user_strs", [])))
+                ids["conversations"] = sorted(set(ids["conversations"]) | set(old.get("conversations", [])))
+                ids["files"] = sorted(set(ids["files"]) | set(old.get("files", [])))
+                for index in ("messages", "convos"):
+                    merged = set(ids["meili"].get(index, [])) | set(old.get("meili", {}).get(index, []))
+                    ids["meili"][index] = sorted(merged)
+            except Exception:
+                pass
+        return ids
+
+    def manifest_path(self) -> Path:
+        return Path(__file__).resolve().parent.parent / "runs" / self.run_id / "purge-manifest.json"
+
+    def _save_manifest(self) -> None:
+        path = self.manifest_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "run_id": self.run_id,
+                    "user_strs": self.ids["user_strs"],
+                    "conversations": self.ids["conversations"],
+                    "files": self.ids["files"],
+                    "meili": self.ids["meili"],
+                },
+                indent=2,
+            )
+        )
 
     def _filter(self, collection: str) -> dict[str, Any]:
         clauses: list[dict[str, Any]] = [
@@ -143,24 +179,31 @@ class Purge:
         log_dir = Path(self.cfg.run_dir if self.cfg.name else ".")  # unused, kept for typing
         snapshot_path = Path(__file__).resolve().parent.parent / "runs" / self.run_id / "deleted.jsonl"
         snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        self._save_manifest()
 
         if self.ids["files"]:
-            self._delete_vectors()
-            steps_done = {"name": "rag_vectors", "count": len(self.ids["files"])}
-            result.steps.append(steps_done)
+            ok, detail = self._delete_vectors()
+            result.steps.append({"name": "rag_vectors", "count": len(self.ids["files"]), "ok": ok})
+            if not ok:
+                result.errors.append(f"rag_vectors: {detail}")
 
         for index, ids in self.ids["meili"].items():
             if ids:
-                deleted = self._delete_meili(index, ids)
-                result.steps.append({"name": f"meili_{index}", "count": deleted})
+                deleted, ok = self._delete_meili(index, ids)
+                result.steps.append({"name": f"meili_{index}", "count": deleted, "ok": ok})
+                if not ok:
+                    result.errors.append(f"meili_{index}: delete not confirmed")
 
         uploads = Path(self.cfg.target.uploads_dir)
         removed = 0
         for uid in self.ids["user_ids"]:
             target = uploads / str(uid)
             if target.exists():
-                shutil.rmtree(target, ignore_errors=True)
-                removed += 1
+                try:
+                    shutil.rmtree(target)
+                    removed += 1
+                except OSError as exc:
+                    result.errors.append(f"uploads {uid}: {exc}")
         if removed or self.ids["user_ids"]:
             result.steps.append({"name": "uploads_disk", "count": removed})
 
@@ -177,6 +220,7 @@ class Purge:
                     result.steps.append({"name": f"mongo_{name}", "count": res.deleted_count})
             except Exception as exc:
                 result.steps.append({"name": f"mongo_{name}", "count": 0, "error": str(exc)[:160]})
+                result.errors.append(f"mongo_{name}: {exc}")
 
         if self.ids["user_ids"]:
             agents = list(
@@ -190,6 +234,21 @@ class Purge:
                     {"author": {"$in": self.ids["user_strs"] + self.ids["user_ids"]}}
                 )
                 result.steps.append({"name": "mongo_agents", "count": res.deleted_count})
+
+        # Fail-closed: never delete users while their vectors/Meili docs/files/rows remain.
+        # Deleting users first would orphan anything a retry still needs to authorise.
+        pre_user = {
+            k: v for k, v in self.verify().items() if k not in ("mongo_users", "mongo_agents")
+        }
+        blocking = {k: v for k, v in pre_user.items() if v not in (0,)}
+        if blocking:
+            result.residue = self.verify()
+            result.ok = False
+            result.retryable = True
+            result.errors.append(f"pre-user checks failed: {blocking}")
+            return result
+
+        if self.ids["user_ids"]:
             res = self.db.users.delete_many({"_id": {"$in": self.ids["user_ids"]}})
             result.steps.append({"name": "mongo_users", "count": res.deleted_count})
 
@@ -198,7 +257,7 @@ class Purge:
         return result
 
     # ------------------------------------------------------- subsystems
-    def _delete_vectors(self) -> None:
+    def _delete_vectors(self) -> tuple[bool, str]:
         """rag_api authorises deletion per owner, so group file ids by their user."""
         users = {u["index"]: u for u in self.ledger.get("users", [])}
         groups: dict[Any, list[tuple[str, Any]]] = {}
@@ -233,6 +292,13 @@ class Purge:
             for user in users.values():
                 delete(leftovers, self._login(user["email"], user["password"]))
 
+        remaining = self._vector_rows()
+        if remaining == 0:
+            return True, ""
+        if remaining == -1:
+            return False, "pg not measurable (set LOADLAB_PG_DSN and install psycopg[binary])"
+        return False, f"{remaining} vector rows remain"
+
     def _login(self, email: str, password: str) -> str:
         try:
             r = httpx.post(
@@ -245,9 +311,9 @@ class Purge:
         except httpx.HTTPError:
             return ""
 
-    def _delete_meili(self, index: str, ids: list[str]) -> int:
+    def _delete_meili(self, index: str, ids: list[str]) -> tuple[int, bool]:
         if not self.cfg.target.meili_key:
-            return 0
+            return 0, False
         try:
             r = httpx.post(
                 f"{self.cfg.target.meili_url.rstrip('/')}/indexes/{index}/documents/delete-batch",
@@ -255,9 +321,11 @@ class Purge:
                 headers={"Authorization": f"Bearer {self.cfg.target.meili_key}"},
                 timeout=60,
             )
-            return len(ids) if r.status_code < 400 else 0
+            if r.status_code >= 400:
+                return 0, False
         except httpx.HTTPError:
-            return 0
+            return 0, False
+        return len(ids), self._meili_rows() in (0,)
 
     def _token(self) -> str:
         """A still-valid access token for one of the run's users (for rag_api)."""
@@ -355,3 +423,44 @@ def _jsonable(doc: dict[str, Any]) -> dict[str, Any]:
 def purge_run(cfg: RunConfig, run_id: str, dry_run: bool = True) -> PurgeResult:
     data = Ledger.load(run_id)
     return Purge(cfg, data, dry_run).execute()
+
+def stale_runs(grace_s: float = 900.0) -> list[dict[str, Any]]:
+    """Runs whose ledger says `running` but whose heartbeat is older than grace."""
+    out = []
+    now = time.time()
+    for run_id in Ledger.runs():
+        try:
+            data = Ledger.load(run_id)
+        except Exception:
+            continue
+        if data.get("status") not in ("running", "stopping"):
+            continue
+        if not data.get("users"):
+            continue
+        beat = float(data.get("heartbeat_at") or data.get("created_at") or 0)
+        age = now - beat
+        if age >= grace_s:
+            out.append({"run_id": run_id, "age_s": round(age), "users": len(data["users"])})
+    return out
+
+
+def sweep_stale(grace_s: float = 900.0, apply: bool = False) -> list[dict[str, Any]]:
+    """Fail-closed cleanup for abandoned runs. Idempotent: safe to call on a schedule."""
+    results = []
+    for item in stale_runs(grace_s):
+        data = Ledger.load(item["run_id"])
+        cfg = RunConfig.model_validate(data["config"])
+        cfg.target = Target()
+        result = purge_run(cfg, item["run_id"], dry_run=not apply)
+        results.append(
+            {
+                "run_id": item["run_id"],
+                "age_s": item["age_s"],
+                "applied": apply,
+                "ok": result.ok,
+                "retryable": result.retryable,
+                "residue": {k: v for k, v in result.residue.items() if v},
+                "errors": result.errors,
+            }
+        )
+    return results

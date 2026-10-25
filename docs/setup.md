@@ -253,5 +253,49 @@ docker-compose.override.yml -f docker-compose.embeddings.yml up -d rag_api`.
 | container can't reach LibreChat | use `host.docker.internal` (compose sets `extra_hosts`) or the host's LAN IP |
 | container can't reach Mongo/Meili/pg | publish those ports, or join the LibreChat compose network (see §1) |
 
+## 5. Recovery and partial state
+
+Everything a run creates is recorded on disk under `runs/<run-id>/`:
+
+```
+ledger.json          users, files (+owner/entity), conversations, heartbeat, status
+purge-manifest.json  ids expanded at purge time; merged on every retry
+deleted.jsonl        snapshot of each document before deletion (forensic, not auto-restore)
+report.md/.json      results
+```
+
+Guarantees:
+
+- **Fail-closed**: users are deleted last, and only if vectors, Meili docs, uploads and Mongo rows all
+  verify zero. If a dependency is down (e.g. rag_api), purge stops with `ok=false, retryable=true`
+  and keeps the users so a retry can still authorise the remaining vectors.
+- **Idempotent**: re-running the same `purge --run <id>` continues where it stopped; nothing is
+  deleted by prefix scan.
+- **Abandoned runs**: the ledger heartbeats every 30 s. `loadlab serve` sweeps runs whose heartbeat is
+  older than `LOADLAB_STALE_GRACE_S` (default 900 s) on startup, and the same sweep is available as a
+  scheduled command.
+- **Test `.env`**: `env apply` writes a state file; `env guard` restores the backed-up bytes if the
+  profile is older than a limit, so a crashed run cannot leave prod limits raised.
+
+Schedule both (defence in depth — covers the case where loadlab never restarts):
+
+```powershell
+# Windows Task Scheduler, every 15 minutes
+schtasks /Create /TN "loadlab sweep" /SC MINUTE /MO 15 /RU SYSTEM /TR ^
+ "C:\loadlab\.venv\Scripts\python.exe -m loadlab.cli purge --stale --grace 900 --apply"
+schtasks /Create /TN "loadlab env guard" /SC MINUTE /MO 15 /RU SYSTEM /TR ^
+ "C:\loadlab\.venv\Scripts\python.exe -m loadlab.cli env guard --max-minutes 120"
+```
+
+```bash
+# cron equivalent
+*/15 * * * * cd /opt/loadlab && ./.venv/bin/python -m loadlab.cli purge --stale --grace 900 --apply
+*/15 * * * * cd /opt/loadlab && ./.venv/bin/python -m loadlab.cli env guard --max-minutes 120
+```
+
+What is *not* guaranteed: there is no transaction across Mongo/Meili/pg/files (ordering + verification
+instead), `deleted.jsonl` is not replayed automatically, and a lost `runs/<id>` directory means no
+target for cleanup (deliberate: no scanning).
+
 Final sanity pass, in order: `/api/health` → `/api/defaults` → a 2-user 10 s smoke run →
 `loadlab purge --run <id>` (dry) → apply.

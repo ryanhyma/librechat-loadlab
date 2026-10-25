@@ -31,6 +31,7 @@ class Ledger:
             "meili": {"messages": [], "convos": []},
             "status": "running",
             "finished_at": None,
+            "heartbeat_at": time.time(),
             "notes": [],
         }
         self.flush()
@@ -85,9 +86,14 @@ class Ledger:
         self.data["notes"].append({"t": time.time(), "text": text})
         self.flush()
 
+    def heartbeat(self) -> None:
+        self.data["heartbeat_at"] = time.time()
+        self.flush()
+
     def finish(self, status: str = "finished") -> None:
         self.data["status"] = status
         self.data["finished_at"] = time.time()
+        self.data["heartbeat_at"] = time.time()
         self.flush()
 
     # ------------------------------------------------------------- load

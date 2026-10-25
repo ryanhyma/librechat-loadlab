@@ -135,6 +135,7 @@ class Engine:
                 asyncio.create_task(self._provider_watch(probe_client))
         self.store.users_active = len(clients)
         stagger = self.cfg.ramp_s / max(1, len(clients))
+        heartbeat = asyncio.create_task(self._heartbeat())
         tasks = [
             asyncio.create_task(self._vu(index, client, stagger * i))
             for i, (index, client) in enumerate(sorted(clients.items()))
@@ -145,9 +146,10 @@ class Engine:
         except asyncio.TimeoutError:
             self.store.stop_reason = "duration"
         finally:
+            heartbeat.cancel()
             for task in tasks:
                 task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.gather(heartbeat, *tasks, return_exceptions=True)
             for client in clients.values():
                 await client.close()
             self.store.users_active = 0
@@ -166,6 +168,14 @@ class Engine:
                 self.cfg.target.provider_url, self.cfg.target.model, self.cfg.target.provider_key
             )
             self.store.add_probe("provider", probe.ok, probe.latency_ms, probe.error_class, probe.detail)
+
+    async def _heartbeat(self) -> None:
+        while True:
+            await asyncio.sleep(30)
+            try:
+                self.ledger.heartbeat()
+            except Exception:
+                pass
 
     async def shutdown(self) -> None:
         self.stop.set()

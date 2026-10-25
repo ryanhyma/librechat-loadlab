@@ -115,6 +115,17 @@ def restore(apply_restart: bool = True) -> dict:
     return result
 
 
+def guard(max_minutes: float = 120.0, apply_restart: bool = True) -> dict:
+    """Scheduled watchdog: restore an applied profile left behind by a crashed run."""
+    state = status()
+    if not state.get("applied"):
+        return {"applied": False, "restored": False}
+    age_min = (time.time() - float(state["applied_at"])) / 60
+    if age_min < max_minutes:
+        return {"applied": True, "restored": False, "age_min": round(age_min, 1)}
+    return {"applied": True, "restored": True, "age_min": round(age_min, 1), **restore(apply_restart)}
+
+
 def status() -> dict:
     if not STATE.exists():
         return {"applied": False}

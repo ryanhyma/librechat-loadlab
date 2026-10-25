@@ -20,7 +20,29 @@ from .purge import purge_run
 from .store import Store
 
 UI = Path(__file__).parent / "ui" / "index.html"
-app = FastAPI(title="loadlab")
+from contextlib import asynccontextmanager
+from .purge import sweep_stale
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """A crashed loadlab must not leave test users behind: sweep abandoned runs once."""
+    import os
+
+    if os.environ.get("LOADLAB_SWEEP_ON_START", "1") != "0":
+        grace = float(os.environ.get("LOADLAB_STALE_GRACE_S", "900"))
+        try:
+            swept = await asyncio.to_thread(sweep_stale, grace, True)
+            if swept:
+                with (RUNS_DIR / "sweeps.jsonl").open("a") as fh:
+                    for row in swept:
+                        fh.write(json.dumps(row, default=str) + "\n")
+        except Exception:
+            pass
+    yield
+
+
+app = FastAPI(title="loadlab", lifespan=lifespan)
 
 
 class Runner:

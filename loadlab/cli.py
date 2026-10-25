@@ -24,7 +24,9 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--json", action="store_true")
 
     purge = sub.add_parser("purge", help="manifest-scoped purge")
-    purge.add_argument("--run", required=True)
+    purge.add_argument("--run", default="")
+    purge.add_argument("--stale", action="store_true", help="purge runs abandoned mid-flight")
+    purge.add_argument("--grace", type=float, default=900.0, help="seconds without heartbeat")
     purge.add_argument("--apply", action="store_true", help="actually delete (default: dry run)")
 
     runs = sub.add_parser("runs", help="list runs")
@@ -41,8 +43,9 @@ def main(argv: list[str] | None = None) -> int:
     stub.add_argument("--port", type=int, default=8099)
 
     env = sub.add_parser("env", help="apply/restore the test .env profile")
-    env.add_argument("action", choices=["apply", "restore", "status"])
+    env.add_argument("action", choices=["apply", "restore", "status", "guard"])
     env.add_argument("--env-file", default=str(__import__("pathlib").Path.home() / "dev/librechat/.env"))
+    env.add_argument("--max-minutes", type=float, default=120.0)
     env.add_argument("--no-restart", action="store_true")
 
     args = parser.parse_args(argv)
@@ -79,15 +82,25 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "purge":
-        from .purge import purge_run
-
-        data = __import__("loadlab.ledger", fromlist=["Ledger"]).Ledger.load(args.run)
-        cfg = RunConfig.model_validate(data["config"])
         from .config import Target
+        from .ledger import Ledger
+        from .purge import purge_run, sweep_stale
 
+        if args.stale:
+            out = sweep_stale(args.grace, apply=args.apply)
+            print(json.dumps(out, indent=2, default=str))
+            return 0 if all(r["ok"] or not args.apply for r in out) else 1
+        if not args.run:
+            print("purge needs --run <id> or --stale", file=sys.stderr)
+            return 2
+        data = Ledger.load(args.run)
+        cfg = RunConfig.model_validate(data["config"])
         cfg.target = Target()
         result = purge_run(cfg, args.run, dry_run=not args.apply)
-        print(json.dumps({"steps": result.steps, "residue": result.residue, "ok": result.ok}, indent=2, default=str))
+        print(json.dumps({
+            "steps": result.steps, "residue": result.residue, "ok": result.ok,
+            "retryable": result.retryable, "errors": result.errors,
+        }, indent=2, default=str))
         return 0 if result.ok or not args.apply else 1
 
     if args.cmd == "ladder":
@@ -157,6 +170,8 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(envmod.apply(Path(args.env_file), apply_restart=not args.no_restart), indent=2))
         elif args.action == "restore":
             print(json.dumps(envmod.restore(apply_restart=not args.no_restart), indent=2))
+        elif args.action == "guard":
+            print(json.dumps(envmod.guard(args.max_minutes, apply_restart=not args.no_restart), indent=2))
         else:
             print(json.dumps(envmod.status(), indent=2))
         return 0
