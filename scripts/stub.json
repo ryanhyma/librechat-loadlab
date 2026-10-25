@@ -1,0 +1,16 @@
+{
+  "name": "stub",
+  "users": 6,
+  "ramp_s": 3,
+  "duration_s": 25,
+  "think_ms": 300,
+  "mix": {
+    "chatty": {"weight": 6, "turns": 3, "think_ms": 300, "prompt": "Reply with one short sentence."},
+    "reader": {"weight": 2, "think_ms": 200},
+    "search": {"weight": 2, "think_ms": 200}
+  },
+  "target": {"endpoint": "loadlabstub", "model": "loadlab-stub"},
+  "probe_meili": true,
+  "probe_rag": false,
+  "slo_p95_ms": 3000
+}

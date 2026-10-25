@@ -1,0 +1,18 @@
+{
+  "name": "full",
+  "users": 8,
+  "ramp_s": 3,
+  "duration_s": 20,
+  "think_ms": 250,
+  "mix": {
+    "chatty": {"weight": 6, "turns": 3, "think_ms": 250, "prompt": "Reply with one short sentence."},
+    "reader": {"weight": 2, "think_ms": 200},
+    "search": {"weight": 1, "think_ms": 200},
+    "rag": {"weight": 1, "think_ms": 200, "file_kb": 8},
+    "impatient": {"weight": 1, "think_ms": 200, "abort_after_ms": 200}
+  },
+  "target": {"endpoint": "loadlabstub", "model": "loadlab-stub"},
+  "probe_meili": true,
+  "probe_rag": true,
+  "slo_p95_ms": 3000
+}

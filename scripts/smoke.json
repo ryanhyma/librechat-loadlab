@@ -1,0 +1,11 @@
+{
+  "name": "smoke",
+  "users": 2,
+  "ramp_s": 2,
+  "duration_s": 35,
+  "think_ms": 500,
+  "mix": {"chatty": {"weight": 1, "turns": 2, "think_ms": 500, "prompt": "Reply with exactly one short sentence."}},
+  "probe_meili": false,
+  "probe_rag": false,
+  "slo_p95_ms": 40000
+}

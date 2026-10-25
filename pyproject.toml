@@ -1,0 +1,10 @@
+[project]
+name = "loadlab"
+version = "0.1.0"
+description = "LibreChat load and user-error harness"
+requires-python = ">=3.11"
+dependencies = ["fastapi", "uvicorn", "httpx", "pymongo", "psutil", "bcrypt", "pydantic"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

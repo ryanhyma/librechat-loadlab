@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>loadlab — LibreChat capacity harness</title>
+<style>
+  :root { --bg:#0b0f14; --panel:#121821; --line:#1f2a37; --txt:#dbe4ee; --dim:#7d8ea3;
+          --ok:#3ddc97; --warn:#f5b642; --bad:#ff5d5d; --accent:#5aa9ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; background:var(--bg); color:var(--txt); }
+  header { display:flex; align-items:center; gap:12px; padding:12px 18px; border-bottom:1px solid var(--line); }
+  header h1 { font-size:15px; margin:0; letter-spacing:.5px; }
+  .pill { padding:2px 8px; border-radius:999px; border:1px solid var(--line); color:var(--dim); font-size:11px; }
+  .pill.on { color:#06210f; background:var(--ok); border-color:var(--ok); }
+  main { display:grid; grid-template-columns: 330px 1fr; gap:14px; padding:14px 18px 40px; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; }
+  h2 { font-size:11px; text-transform:uppercase; letter-spacing:1.2px; color:var(--dim); margin:0 0 10px; }
+  label { display:flex; justify-content:space-between; align-items:center; gap:8px; margin:6px 0; color:var(--dim); }
+  input[type=number], input[type=text], select { width:110px; background:#0a0f15; color:var(--txt);
+          border:1px solid var(--line); border-radius:5px; padding:4px 6px; font:inherit; }
+  .mix label { color:var(--txt); }
+  .mix small { color:var(--dim); }
+  button { font:inherit; padding:7px 12px; border-radius:6px; border:1px solid var(--line);
+           background:#16202c; color:var(--txt); cursor:pointer; }
+  button.primary { background:var(--accent); color:#06121f; border-color:var(--accent); font-weight:700; }
+  button.danger { border-color:#5a2330; color:#ffb3b3; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; }
+  .tiles { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin-bottom:12px; }
+  .tile { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+  .tile b { display:block; font-size:20px; margin-top:2px; }
+  .tile span { color:var(--dim); font-size:10px; text-transform:uppercase; letter-spacing:1px; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th, td { text-align:right; padding:4px 6px; border-bottom:1px solid var(--line); }
+  th:first-child, td:first-child { text-align:left; }
+  th { color:var(--dim); font-weight:500; font-size:10px; text-transform:uppercase; letter-spacing:.8px; }
+  .bad { color:var(--bad); } .ok { color:var(--ok); } .warn { color:var(--warn); }
+  canvas { width:100%; height:110px; display:block; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .scroll { max-height:180px; overflow:auto; }
+  footer { padding:0 18px 30px; color:var(--dim); font-size:11px; }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>loadlab</h1>
+  <span class="pill" id="status">idle</span>
+  <span class="pill" id="runid">no run</span>
+  <span class="pill" id="clock">0s</span>
+</header>
+
+<main>
+  <div>
+    <section>
+      <h2>Scenario</h2>
+      <label>Users <input id="users" type="number" value="5" min="1" max="5000"></label>
+      <label>Ramp (s) <input id="ramp" type="number" value="10" min="0"></label>
+      <label>Duration (s) <input id="duration" type="number" value="60" min="5"></label>
+      <label>Think (ms) <input id="think" type="number" value="800" min="0"></label>
+      <label>Endpoint <input id="endpoint" type="text" value="local27b"></label>
+      <label>Model <input id="model" type="text" value="qwen3.6-27b"></label>
+      <label>SLO p95 (ms) <input id="slo" type="number" value="4000" min="100"></label>
+      <label>Max err rate <input id="maxerr" type="number" value="0.02" step="0.01"></label>
+    </section>
+
+    <section class="mix" style="margin-top:12px">
+      <h2>What each user does</h2>
+      <label>chatty <span><input id="w_chatty" type="number" value="6" min="0" step="1"> <small>%</small></span></label>
+      <label>reader <span><input id="w_reader" type="number" value="2" min="0" step="1"> <small>%</small></span></label>
+      <label>search <span><input id="w_search" type="number" value="1" min="0" step="1"> <small>%</small></span></label>
+      <label>rag upload <span><input id="w_rag" type="number" value="1" min="0" step="1"> <small>%</small></span></label>
+      <label>impatient <span><input id="w_impatient" type="number" value="0" min="0" step="1"> <small>%</small></span></label>
+      <label>auth churn <span><input id="w_auth" type="number" value="0" min="0" step="1"> <small>%</small></span></label>
+      <label>Meili probe <input id="probe_meili" type="checkbox" checked></label>
+      <label>RAG probe <input id="probe_rag" type="checkbox" checked></label>
+    </section>
+
+    <section style="margin-top:12px">
+      <div class="row">
+        <button class="primary" id="start">Start run</button>
+        <button class="danger" id="stop" disabled>Stop</button>
+      </div>
+      <p id="msg" style="color:var(--dim);margin:10px 0 0"></p>
+    </section>
+  </div>
+
+  <div>
+    <div class="tiles">
+      <div class="tile"><span>rps</span><b id="t_rps">0</b></div>
+      <div class="tile"><span>in flight</span><b id="t_inflight">0</b></div>
+      <div class="tile"><span>errors</span><b id="t_err">0</b></div>
+      <div class="tile"><span>error rate</span><b id="t_rate">0%</b></div>
+      <div class="tile"><span>users active</span><b id="t_users">0</b></div>
+    </div>
+
+    <section>
+      <h2>Throughput / p95</h2>
+      <canvas id="chart" width="900" height="110"></canvas>
+      <div class="grid2" style="margin-top:12px">
+        <div>
+          <h2>Per action</h2>
+          <table id="actions"><thead><tr><th>action</th><th>n</th><th>err</th><th>p50</th><th>p95</th><th>ttft p95</th></tr></thead><tbody></tbody></table>
+        </div>
+        <div>
+          <h2>Errors by class</h2>
+          <table id="classes"><thead><tr><th>class</th><th>count</th></tr></thead><tbody></tbody></table>
+          <h2 style="margin-top:12px">By limiter</h2>
+          <table id="limiters"><thead><tr><th>limiter</th><th>count</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <section style="margin-top:12px">
+      <h2>Silent-failure probes</h2>
+      <div class="scroll"><table id="probes"><thead><tr><th>probe</th><th>ok</th><th>ms</th><th>class</th><th>detail</th></tr></thead><tbody></tbody></table></div>
+    </section>
+
+    <section style="margin-top:12px">
+      <h2>Recent errors</h2>
+      <div class="scroll"><table id="errors"><thead><tr><th>action</th><th>class</th><th>limiter</th><th>detail</th></tr></thead><tbody></tbody></table></div>
+    </section>
+
+    <section style="margin-top:12px">
+      <h2>Runs</h2>
+      <div class="scroll"><table id="runs"><thead><tr><th>run</th><th>status</th><th>users</th><th>report</th><th>purge</th></tr></thead><tbody></tbody></table></div>
+      <p style="color:var(--dim);margin:8px 0 0">Host: <span id="host">—</span></p>
+    </section>
+  </div>
+</main>
+<footer>loadlab · errors are classified from LibreChat's own middleware + SSE contract · purge is manifest-scoped</footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const fmt = (v) => (v === null || v === undefined ? "—" : v);
+let running = false;
+const history = [];
+
+function payload() {
+  const mix = {};
+  for (const k of ["chatty","reader","search","rag","impatient","auth"]) {
+    const w = Number($("w_"+k).value || 0);
+    if (w > 0) mix[k] = { weight: w, think_ms: Number($("think").value), turns: 3 };
+  }
+  return {
+    name: "ui", users: Number($("users").value), ramp_s: Number($("ramp").value),
+    duration_s: Number($("duration").value), think_ms: Number($("think").value),
+    mix, probe_meili: $("probe_meili").checked, probe_rag: $("probe_rag").checked,
+    slo_p95_ms: Number($("slo").value), max_error_rate: Number($("maxerr").value),
+    target: { endpoint: $("endpoint").value, model: $("model").value }
+  };
+}
+
+async function start() {
+  $("msg").textContent = "";
+  const r = await fetch("/api/runs", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(payload()) });
+  const body = await r.json();
+  if (!r.ok) { $("msg").textContent = body.detail || "failed to start"; return; }
+  $("runid").textContent = body.run_id;
+}
+
+async function stop() {
+  const r = await fetch("/api/runs/stop", { method:"POST" });
+  if (!r.ok) $("msg").textContent = (await r.json()).detail || "stop failed";
+}
+
+async function loadRuns() {
+  const r = await fetch("/api/runs"); if (!r.ok) return;
+  const rows = await r.json();
+  const tb = $("runs").querySelector("tbody"); tb.innerHTML = "";
+  for (const row of rows.slice(0, 12)) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${row.run_id}</td><td>${row.status||""}</td><td>${row.users??""}</td>` +
+      `<td>${row.has_report ? `<a href="/api/runs/${row.run_id}/report" target="_blank">md</a>` : "—"}</td>` +
+      `<td><button data-run="${row.run_id}">dry purge</button></td>`;
+    tb.appendChild(tr);
+  }
+  tb.querySelectorAll("button[data-run]").forEach(b => b.onclick = () => purge(b.dataset.run));
+}
+
+async function purge(runId) {
+  const r = await fetch("/api/purge", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({run_id: runId, dry_run: true}) });
+  const body = await r.json();
+  $("msg").textContent = r.ok ? `dry purge ${runId}: ${JSON.stringify(body.steps)} residue=${JSON.stringify(body.residue)}` : (body.detail||"purge failed");
+}
+
+function tiles(s) {
+  const t = s.totals || {};
+  $("t_rps").textContent = t.rps_10s ?? 0;
+  $("t_inflight").textContent = t.inflight_total ?? 0;
+  $("t_err").textContent = t.errors ?? 0;
+  $("t_rate").textContent = `${((t.error_rate??0)*100).toFixed(1)}%`;
+  $("t_users").textContent = s.run?.users_active ?? 0;
+  $("clock").textContent = `${s.run?.elapsed_s ?? 0}s / ${s.run?.duration_s ?? 0}s`;
+  $("status").textContent = s.run?.finished ? "finished" : (s.run?.users_active ? "running" : "starting");
+  $("status").classList.toggle("on", !!s.run?.users_active && !s.run?.finished);
+  $("host").textContent = s.host ? `cpu ${s.host.cpu}% · mem ${s.host.mem}% · disk ${s.host.disk}%` : "—";
+}
+
+function table(id, rows, cols) {
+  const tb = $(id).querySelector("tbody"); tb.innerHTML = "";
+  for (const row of rows) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = cols.map(c => `<td>${fmt(typeof c === "function" ? c(row) : row[c])}</td>`).join("");
+    tb.appendChild(tr);
+  }
+}
+
+function render(s) {
+  tiles(s);
+  table("actions", Object.entries(s.by_action||{}).map(([k,v])=>({action:k,...v})),
+        ["action","count","errors","p50_ms","p95_ms","ttft_p95_ms"]);
+  table("classes", Object.entries(s.errors_by_class||{}).map(([k,v])=>({c:k,n:v})), ["c","n"]);
+  table("limiters", Object.entries(s.errors_by_limiter||{}).map(([k,v])=>({c:k,n:v})), ["c","n"]);
+  table("probes", (s.probes||[]).slice(-15).reverse(), ["kind","ok","latency_ms","error_class","detail"]);
+  table("errors", (s.recent_errors||[]).slice(-15).reverse(), ["action","error_class","limiter","detail"]);
+  history.push({ rps: s.totals?.rps_10s||0, p95: (s.by_action?.chat?.p95_ms)||0 });
+  if (history.length > 120) history.shift();
+  draw();
+}
+
+function draw() {
+  const c = $("chart"), ctx = c.getContext("2d");
+  const w = c.width, h = c.height;
+  ctx.clearRect(0,0,w,h);
+  if (!history.length) return;
+  const maxR = Math.max(5, ...history.map(p => p.rps));
+  const maxP = Math.max(500, ...history.map(p => p.p95));
+  const plot = (key, max, color) => {
+    ctx.beginPath(); ctx.strokeStyle = color; ctx.lineWidth = 1.5;
+    history.forEach((p, i) => {
+      const x = (i / Math.max(1, history.length - 1)) * w;
+      const y = h - (p[key] / max) * (h - 8) - 4;
+      i ? ctx.lineTo(x,y) : ctx.moveTo(x,y);
+    });
+    ctx.stroke();
+  };
+  plot("rps", maxR, "#5aa9ff"); plot("p95", maxP, "#f5b642");
+  ctx.fillStyle = "#7d8ea3"; ctx.font = "10px ui-monospace";
+  ctx.fillText(`rps ≤${maxR}`, 4, 12); ctx.fillText(`p95 ≤${maxP}ms`, 4, h - 4);
+}
+
+let es = null;
+let closedByUs = false;
+
+function connect() {
+  es = new EventSource("/api/live");
+  es.onmessage = (e) => {
+    const s = JSON.parse(e.data);
+    if (s.idle) return;
+    running = !s.run.finished;
+    $("start").disabled = running; $("stop").disabled = !running;
+    render(s);
+    if (s.run.finished) {
+      closedByUs = true;
+      es.close();
+      $("status").textContent = "finished";
+      $("status").classList.remove("on");
+      loadRuns();
+    }
+  };
+  es.onerror = () => {
+    if (closedByUs) return;
+    $("status").textContent = "reconnecting";
+  };
+}
+
+$("start").onclick = start;
+$("stop").onclick = stop;
+loadRuns();
+connect();
+</script>
+</body>
+</html>
