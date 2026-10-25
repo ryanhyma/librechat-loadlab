@@ -25,9 +25,7 @@
     "model": "loadlab-tight",
     "provider_url": "http://127.0.0.1:4000/v1",
     "provider_interval_s": 3,
-    "llm_metrics_url": "http://127.0.0.1:4000/metrics",
-    "llm_metrics_key": "REDACTED",
-    "provider_key": "REDACTED"
+    "llm_metrics_url": "http://127.0.0.1:4000/metrics"
   },
   "probe_meili": false,
   "probe_rag": false,
