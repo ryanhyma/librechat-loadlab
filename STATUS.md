@@ -59,14 +59,21 @@ Measured on dev (stub LLM = app-tier capacity, no GPU in the loop), 8 users / 15
 
 ## Known gaps / next
 
-1. **LibreChat `file_search` path** (agent with file-search tool) is not driven yet; the probe calls
-   rag_api directly. Needs agent creation per run.
-2. **redis off on dev** → limiters/pending requests are in-process; multi-node behaviour unverified.
-3. Rate-limit profile is applied manually on dev (`.env` has raised limits + `METRICS_SECRET`);
-   `env apply/restore` is implemented and tested, but the dev stack was not restarted by it.
-4. Load ladder/soak presets exist as config only; no automatic "find the knee" sweep yet.
-5. `docker restart LibreChat` is the dev restart path; production uses the `.env` `LOADLAB_RESTART_CMD`
+1. **Redis off on dev** → limiters/pending requests are in-process; multi-node behaviour unverified.
+2. Rate-limit profile is applied manually on dev (`.env` has raised limits + `METRICS_SECRET`);
+   `env apply/restore/guard` is implemented and tested, but the dev stack was not restarted by it.
+3. `ladder` sweeps fixed user levels; the knee is reported per run, not auto-searched.
+4. `docker restart LibreChat` is the dev restart path; production uses `LOADLAB_RESTART_CMD`
    (nssm/sc.exe).
+5. LiteLLM remains an optional gateway profile; the harness never requires it.
+
+## Final state (2026-10-25)
+
+- Setup: `docs/setup.md` (container + Windows venv), `Dockerfile`, `docker-compose.yml`, `.env.example`.
+- Both RAG paths laddered: direct rag_api p95 42/185/694 ms, agent file_search p95 898/1786/3179 ms
+  at 10/25/50 users, 0 errors, 0 silent failures.
+- Provider-level 429 visible via gateway metrics + probe; LibreChat masks it by design.
+- Purge fail-closed + stale sweep + env guard; scheduled-task commands documented (§5).
 
 
 ## Partial-state guardrails (added late)

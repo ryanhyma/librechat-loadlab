@@ -67,7 +67,10 @@ manifest-scoped, idempotent, and snapshots documents to `deleted.jsonl` before d
 
 Order: Meili docs → rag_api `DELETE /documents` → uploads dir → Mongo (`files`, `messages`,
 `conversations`, `transactions`, `balances`, `presets`, `sharedlinks`, `toolcalls`, `sessions`,
-`users` last) → verify **zero residue** (Mongo counts, Meili hits, pgvector rows, files on disk).
+agents) → **users last**, and only after every other surface verifies zero (fail-closed). A failed
+dependency leaves the users in place and returns `retryable`; re-running continues. Abandoned runs are
+swept with `purge --stale` (also on `serve` startup) and a test `.env` left applied is restored by
+`env guard` — schedule both (§5 of docs/setup.md).
 LibreChat's own `deleteUserById` is **not** a cascade — never rely on it.
 
 ## Test `.env` profile (no containers = change management)
@@ -122,11 +125,14 @@ loadlab/
 ## Known limits
 
 - Filters and rate-limit stores are in-process here (Redis off): multi-node behaviour is not exercised.
-- RAG ingestion needs a configured embedding provider; on this dev box `/embed` answers 200 with
-  `status:false` (missing OpenAI key) and loadlab reports it as `silent_rag` — which is the point.
-- `rag` probe talks to rag_api directly; LibreChat's own `file_search` path requires an agent with
-  the file-search tool (next step, see PLAN.md).
-- Generator should run on a different host than the one under test.
+- RAG needs an embedding provider. Dev now uses local `all-MiniLM-L6-v2`; when embeddings are
+  unavailable `/embed` still answers 200 with `status:false` and loadlab reports `silent_rag`.
+- Two RAG paths are implemented and laddered: direct rag_api (`rag` archetype) and LibreChat agent
+  `file_search` (`agentrag`, per-user agent + fixture + answer must contain the codename).
+- Upstream 429s are masked by LibreChat (retry/stall). Count them at a gateway
+  (`litellm_proxy_failed_requests_metric_total{exception_status="429"}`) or with the provider probe;
+  LiteLLM is optional and only needed for quota/retry rehearsal.
+- Generator should run on a different host than the one under test (dev shares the box, so p95 is a floor).
 
 ## Local HuggingFace embeddings for rag_api (no OpenAI key)
 

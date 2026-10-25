@@ -1,6 +1,7 @@
 # loadlab — LibreChat load & user-error harness
 
-Status: PLAN (awaiting go-ahead)
+Status: **BUILT and validated** (2026-10-25) — see `STATUS.md`; setup in `docs/setup.md`.
+This file remains the design rationale (error surfaces, topology, cleanup strategy).
 Target: Windows Server (Python 3.12 + Node installed, containers allowed). Library first, container optional.
 
 ## 0. Two runtimes — same code, different hosts
@@ -343,9 +344,7 @@ Topology consequences to design for:
    SHA-256 proof and an auto-restore watchdog (5.2). `probe` mode is the no-restart fallback.
 2. **User provisioning** — decided: direct Mongo insert of template-user clones, tracked in the run
    ledger (5.1). SSO-only prod would instead reuse pre-issued sessions.
-3. **Redis** — production multi-node behaviour (concurrency limiter, resumable streams) is not
-   exercised by the current single-node dev box; the harness should support a Redis profile.
-4. **Generator placement** — run it on a separate machine from the server under test, or the
-   generator steals the CPU it is measuring.
-5. **Secrets** — `METRICS_SECRET` must be set for the collector; keep it in a loadlab config, not in
-   the UI.
+3. **Redis** — still open: production multi-node behaviour (concurrency limiter, resumable streams)
+   is not exercised by the single-node dev box.
+4. **Generator placement** — decided: run on a separate machine; dev shares the box, so its p95 is a floor.
+5. **Secrets** — decided: `METRICS_SECRET` stays in the loadlab config/env, never in the UI.
