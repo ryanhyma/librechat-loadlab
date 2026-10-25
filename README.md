@@ -1,4 +1,4 @@
-# loadlab — LibreChat capacity & user-error harness
+# librechat-loadlab — capacity & user-error harness for LibreChat
 
 Runs **outside** LibreChat: a dashboard where you pick how many users and what each user does,
 then measures throughput, latency and **every user-visible error** (including the ones LibreChat
@@ -6,6 +6,8 @@ reports as success).
 
 > Production target: Windows Server, native services, **no containers**. Dev box: Linux + Docker.
 > Same Python package, `--profile` is just configuration.
+
+Not affiliated with the LibreChat project. MIT licensed. Package/import name stays `loadlab`.
 
 ## What it captures
 

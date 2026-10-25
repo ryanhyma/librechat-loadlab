@@ -1,9 +1,17 @@
 [project]
-name = "loadlab"
+name = "librechat-loadlab"
 version = "0.1.0"
-description = "LibreChat load and user-error harness"
+description = "Capacity and user-error harness for LibreChat: virtual users, RAG/file_search load, limiter and 429 taxonomy, manifest-scoped purge"
+readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.11"
 dependencies = ["fastapi", "uvicorn", "httpx", "pymongo", "psutil", "bcrypt", "pydantic"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+loadlab = "loadlab.cli:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
