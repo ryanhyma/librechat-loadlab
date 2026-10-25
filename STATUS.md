@@ -37,8 +37,9 @@ Measured on dev (stub LLM = app-tier capacity, no GPU in the loop), 8 users / 15
 - abort (impatient) p95 452 ms, TTFT 162 ms — real mid-stream abort, not a wrapper
 - read p95 27 ms, search p95 85 ms, upload p95 45 ms
 - Meili index lag 8–16 ms (probe passed)
-- **rag_api embed: 200 + `status:false` → classified `silent_rag`** — dev has no embedding key;
-  this is exactly the silent failure the probe exists to catch
+- **rag_api embed now real**: local `all-MiniLM-L6-v2` via sentence-transformers → `status:true`,
+  `/query` returns the fixture token, `rag_embed`/`rag_query` probes green (~20 ms embed, ~12 ms query)
+- RAG vectors are purged per owner; a fresh run verified **all-zero residue** including pgvector
 - real 27B: one turn ≈ 60 s (TTFT ≈ 54 s) → confirms why the stub tier is required for capacity work
 
 ## What's in the box
@@ -60,7 +61,7 @@ Measured on dev (stub LLM = app-tier capacity, no GPU in the loop), 8 users / 15
 
 1. **LibreChat `file_search` path** (agent with file-search tool) is not driven yet; the probe calls
    rag_api directly. Needs agent creation per run.
-2. **Redis off on dev** → limiters/pending requests are in-process; multi-node behaviour unverified.
+2. **redis off on dev** → limiters/pending requests are in-process; multi-node behaviour unverified.
 3. Rate-limit profile is applied manually on dev (`.env` has raised limits + `METRICS_SECRET`);
    `env apply/restore` is implemented and tested, but the dev stack was not restarted by it.
 4. Load ladder/soak presets exist as config only; no automatic "find the knee" sweep yet.

@@ -1,0 +1,6 @@
+{
+  "name": "ragcheck", "users": 2, "ramp_s": 1, "duration_s": 6, "think_ms": 150,
+  "mix": {"rag": {"weight": 1, "think_ms": 150, "file_kb": 8}},
+  "target": {"endpoint": "loadlabstub", "model": "loadlab-stub"},
+  "probe_meili": false, "probe_rag": true, "slo_p95_ms": 5000
+}

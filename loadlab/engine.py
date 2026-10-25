@@ -284,7 +284,7 @@ class Engine:
         self.store.add_probe("rag_embed", embed.ok, embed.latency_ms, embed.error_class, embed.detail)
         if not embed.ok:
             return
-        self.ledger.add_file(file_id, f"loadlab-{token}.txt", token)
+        self.ledger.add_file(file_id, f"loadlab-{token}.txt", token, user=index)
         query = await client.rag_query(file_id, token)
         if not query.ok:
             self.store.add_probe("rag_query", False, query.latency_ms, query.error_class, query.detail)

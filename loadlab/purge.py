@@ -188,19 +188,49 @@ class Purge:
 
     # ------------------------------------------------------- subsystems
     def _delete_vectors(self) -> None:
-        token = self._token()
-        if not token:
-            return
+        """rag_api authorises deletion per owner, so group file ids by their user."""
+        users = {u["index"]: u for u in self.ledger.get("users", [])}
+        groups: dict[Any, list[str]] = {}
+        for entry in self.ledger.get("files", []):
+            groups.setdefault(entry.get("user_index"), []).append(entry["file_id"])
+
+        def delete(ids: list[str], token: str) -> None:
+            if not ids or not token:
+                return
+            try:
+                httpx.request(
+                    "DELETE",
+                    f"{self.cfg.target.rag_url.rstrip('/')}/documents",
+                    json=ids,
+                    headers={"Authorization": f"Bearer {token}", "User-Agent": UA},
+                    timeout=90,
+                )
+            except httpx.HTTPError:
+                pass
+
+        for user_index, ids in groups.items():
+            if user_index is None:
+                continue
+            user = users.get(user_index)
+            if user:
+                delete(ids, self._login(user["email"], user["password"]))
+        # legacy ledgers without an owner: try each user's token
+        leftovers = groups.get(None, [])
+        if leftovers:
+            for user in users.values():
+                delete(leftovers, self._login(user["email"], user["password"]))
+
+    def _login(self, email: str, password: str) -> str:
         try:
-            httpx.request(
-                "DELETE",
-                f"{self.cfg.target.rag_url.rstrip('/')}/documents",
-                json=self.ids["files"],
-                headers={"Authorization": f"Bearer {token}", "User-Agent": UA},
-                timeout=60,
+            r = httpx.post(
+                f"{self.cfg.target.base_url}/api/auth/login",
+                json={"email": email, "password": password},
+                headers={"User-Agent": UA},
+                timeout=20,
             )
+            return r.json().get("token", "") if r.status_code == 200 else ""
         except httpx.HTTPError:
-            pass
+            return ""
 
     def _delete_meili(self, index: str, ids: list[str]) -> int:
         if not self.cfg.target.meili_key:

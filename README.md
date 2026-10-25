@@ -113,3 +113,28 @@ loadlab/
 - `rag` probe talks to rag_api directly; LibreChat's own `file_search` path requires an agent with
   the file-search tool (next step, see PLAN.md).
 - Generator should run on a different host than the one under test.
+
+## Local HuggingFace embeddings for rag_api (no OpenAI key)
+
+Dev (containers): `~/dev/librechat` now has `Dockerfile.rag-embeddings` + `docker-compose.embeddings.yml`,
+which install CPU torch + sentence-transformers into the lite RAG image. Run the stack with:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.embeddings.yml up -d
+```
+
+`.env`: `EMBEDDINGS_PROVIDER=huggingface`, `EMBEDDINGS_MODEL=sentence-transformers/all-MiniLM-L6-v2`.
+Model is 384-dim; pgvector's `embedding` column is unconstrained (`vector`), so no schema change.
+First embed downloads ~90 MB into `HF_HOME` (`/app/data/hf`).
+
+Windows prod (native rag_api):
+```powershell
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install langchain-huggingface sentence-transformers "pandas>=2.2.2"
+$env:EMBEDDINGS_PROVIDER="huggingface"
+$env:EMBEDDINGS_MODEL="sentence-transformers/all-MiniLM-L6-v2"
+$env:HF_HOME="C:\rag-api\data\hf"
+```
+Pre-download the model once (`python -c "from sentence_transformers import SentenceTransformer as S; S('sentence-transformers/all-MiniLM-L6-v2')"`)
+so the service start is offline-safe. Verified on dev: `/embed` → `status:true`, `/query` returns the
+fixture token, and `loadlab` reports `rag_embed ok` (no more `silent_rag`).

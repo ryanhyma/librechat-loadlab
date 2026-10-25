@@ -57,8 +57,10 @@ class Ledger:
         if conversation_id:
             self._append("conversations", conversation_id)
 
-    def add_file(self, file_id: str, filename: str, token: str) -> None:
-        self.data["files"].append({"file_id": file_id, "filename": filename, "token": token})
+    def add_file(self, file_id: str, filename: str, token: str, user: int | None = None) -> None:
+        self.data["files"].append(
+            {"file_id": file_id, "filename": filename, "token": token, "user_index": user}
+        )
         self.flush()
 
     def add_meili(self, index: str, doc_id: str) -> None:
