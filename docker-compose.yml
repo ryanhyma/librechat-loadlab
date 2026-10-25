@@ -1,0 +1,43 @@
+# loadlab stack: dashboard/control plane + deterministic stub LLM.
+# Run from this directory:  docker compose up -d --build
+services:
+  loadlab:
+    build: .
+    image: loadlab:local
+    container_name: loadlab
+    ports:
+      - "${LOADLAB_PORT:-8090}:8090"
+    env_file:
+      - .env
+    environment:
+      # reach LibreChat and its dependencies on the host
+      - LOADLAB_BASE_URL=${LOADLAB_BASE_URL:-http://host.docker.internal:3080}
+      - LOADLAB_MONGO_URI=${LOADLAB_MONGO_URI:-mongodb://host.docker.internal:27017/LibreChat}
+      - LOADLAB_MEILI_URL=${LOADLAB_MEILI_URL:-http://host.docker.internal:7700}
+      - LOADLAB_RAG_URL=${LOADLAB_RAG_URL:-http://host.docker.internal:8000}
+      - LOADLAB_UPLOADS_DIR=${LOADLAB_UPLOADS_DIR:-/librechat-uploads}
+      - LOADLAB_ENV_FILE=${LOADLAB_ENV_FILE:-/app/.env}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./runs:/app/runs
+      - ./.env:/app/.env:ro
+      # mount LibreChat's uploads dir read/write so purge can delete run files
+      - ${LIBRECHAT_UPLOADS_DIR:-../librechat/uploads}:/librechat-uploads
+    restart: unless-stopped
+
+  stub:
+    build: .
+    image: loadlab:local
+    container_name: loadlab-stub
+    command: ["python", "-m", "loadlab.cli", "stub", "--host", "0.0.0.0", "--port", "8099"]
+    environment:
+      - LOADLAB_STUB_MODE=${LOADLAB_STUB_MODE:-normal}
+      - LOADLAB_STUB_TTFT_MS=${LOADLAB_STUB_TTFT_MS:-120}
+      - LOADLAB_STUB_TPS=${LOADLAB_STUB_TPS:-60}
+      - LOADLAB_STUB_TOKENS=${LOADLAB_STUB_TOKENS:-48}
+      - LOADLAB_STUB_RPM=${LOADLAB_STUB_RPM:-0}
+      - LOADLAB_STUB_TPM=${LOADLAB_STUB_TPM:-0}
+    ports:
+      - "${LOADLAB_STUB_PORT:-8099}:8099"
+    restart: unless-stopped

@@ -125,6 +125,14 @@ class Engine:
             self.store.finished = True
             self.ledger.finish("failed")
             return
+        if self.cfg.target.provider_url:
+            probe_client = self._client()
+            probe = await probe_client.provider_probe(
+                self.cfg.target.provider_url, self.cfg.target.model, self.cfg.target.provider_key
+            )
+            self.store.add_probe("provider", probe.ok, probe.latency_ms, probe.error_class, probe.detail)
+            if self.cfg.target.provider_interval_s > 0:
+                asyncio.create_task(self._provider_watch(probe_client))
         self.store.users_active = len(clients)
         stagger = self.cfg.ramp_s / max(1, len(clients))
         tasks = [
@@ -145,6 +153,19 @@ class Engine:
             self.store.users_active = 0
             self.store.finished = True
             self.ledger.finish(self.store.stop_reason)
+
+    async def _provider_watch(self, client: LibreChatClient) -> None:
+        """Sample the model tier directly so a masked upstream 429 is still counted."""
+        while not self.stop.is_set():
+            try:
+                await asyncio.wait_for(self.stop.wait(), timeout=self.cfg.target.provider_interval_s)
+                return
+            except asyncio.TimeoutError:
+                pass
+            probe = await client.provider_probe(
+                self.cfg.target.provider_url, self.cfg.target.model, self.cfg.target.provider_key
+            )
+            self.store.add_probe("provider", probe.ok, probe.latency_ms, probe.error_class, probe.detail)
 
     async def shutdown(self) -> None:
         self.stop.set()
@@ -201,6 +222,12 @@ class Engine:
             await self._rag(index, client, rng)
         elif action == "impatient":
             await self._impatient(index, client, state, item, rng)
+        elif action == "double_tap":
+            await self._double_tap(index, client, item, rng)
+        elif action == "broken":
+            await self._broken(index, client, rng)
+        elif action == "agentrag":
+            await self._agent_rag(index, client, state, item, rng)
         elif action == "auth":
             await self._auth(index, client, rng)
         else:
@@ -292,6 +319,84 @@ class Engine:
             self.store.add_probe("rag_query", False, query.latency_ms, "silent_rag", "query returned no matching content")
         else:
             self.store.add_probe("rag_query", True, query.latency_ms, "ok", "")
+
+    async def _double_tap(self, index: int, client: LibreChatClient, item: Any, rng: random.Random) -> None:
+        """Two in-flight messages for one user -> the concurrent-message 429 by design."""
+        text = f"Double tap probe {secrets.token_hex(3)}"
+        # CONCURRENT_MESSAGE_MAX defaults to 2, so fire one more than the limit
+        self.store.enter("double_tap")
+        try:
+            turns = await asyncio.gather(
+                *[client.chat(f"{text} {i}", None, NO_PARENT_ID) for i in range(3)]
+            )
+        finally:
+            self.store.leave("double_tap")
+        for turn in turns:
+            self._record("double_tap", index, turn)
+        hit = any(t.error_class == "limiter_concurrent" for t in turns)
+        self.store.add_probe(
+            "expect_concurrency_429", hit, None,
+            "ok" if hit else "probe_error",
+            "second concurrent message rejected" if hit else "no 429 (limiter off or too slow)",
+        )
+
+    async def _broken(self, index: int, client: LibreChatClient, rng: random.Random) -> None:
+        """Deliberately invalid request — proves the harness reports real server errors."""
+        status, body = await client.upload_bad("bad.txt", b"invalid upload path")
+        cls, lim, detail = errs.classify_http(status, body)
+        self.store.add(
+            Sample(time.time(), "broken", status < 400, status, cls, lim, detail, user=index)
+        )
+
+    async def _agent_rag(
+        self, index: int, client: LibreChatClient, state: dict[str, Any], item: Any, rng: random.Random
+    ) -> None:
+        """RAG through LibreChat: a per-user agent with the native file_search tool."""
+        from .agent import create_agent, file_search_turn, upload_agent_file
+
+        t = self.cfg.target
+        token = state.get("agent_token")
+        if not state.get("agent_id"):
+            token = f"AGENTRAG{secrets.token_hex(4).upper()}"
+            agent_id, status, detail = await create_agent(
+                client, f"loadlab {self.ledger.short_id} {index}", t.endpoint, t.model
+            )
+            if not agent_id:
+                self.store.add(Sample(time.time(), "agent_setup", False, status, "server", detail=detail, user=index))
+                return
+            content = (f"The deployment codename is {token}. " * 60).encode()
+            file_id, embedded, status, detail = await upload_agent_file(
+                client, agent_id, f"loadlab-{token}.txt", content
+            )
+            if not file_id or not embedded:
+                self.store.add_probe("agent_upload", False, None, "silent_rag", detail or "not embedded")
+                self.store.add(Sample(time.time(), "agent_setup", False, status, "silent_rag", detail=detail, user=index))
+                return
+            self.ledger.add_file(
+                file_id, f"loadlab-{token}.txt", token, user=index, entity_id=agent_id
+            )
+            self.store.add_probe("agent_upload", True, None, "ok", file_id)
+            state.update(agent_id=agent_id, agent_token=token, agent_files=[file_id])
+            client.endpoint, client.agent_id = "agents", agent_id
+
+        self.store.enter("agent_chat")
+        try:
+            turn = await file_search_turn(
+                client, state["agent_id"], "What is the deployment codename? Reply with only the codename.",
+                state.get("conversation_id"),
+            )
+        finally:
+            self.store.leave("agent_chat")
+        self._record("agent_chat", index, turn)
+        if turn.ok:
+            state["conversation_id"] = turn.conversation_id or state.get("conversation_id")
+            state["parent_id"] = turn.response_message_id or state.get("parent_id")
+            if state["conversation_id"]:
+                self.ledger.add_conversation(state["conversation_id"])
+            if token and token not in (turn.text or ""):
+                self.store.add_probe("agent_file_search", False, turn.ttft_ms, "silent_rag", "answer did not contain the fixture codename")
+            else:
+                self.store.add_probe("agent_file_search", True, turn.ttft_ms, "ok", "codename retrieved")
 
     async def _impatient(
         self, index: int, client: LibreChatClient, state: dict[str, Any], item: Any, rng: random.Random

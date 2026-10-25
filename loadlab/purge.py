@@ -179,6 +179,17 @@ class Purge:
                 result.steps.append({"name": f"mongo_{name}", "count": 0, "error": str(exc)[:160]})
 
         if self.ids["user_ids"]:
+            agents = list(
+                self.db.agents.find({"author": {"$in": self.ids["user_strs"] + self.ids["user_ids"]}})
+            )
+            if agents:
+                with snapshot_path.open("a") as fh:
+                    for doc in agents:
+                        fh.write(json.dumps({"collection": "agents", "doc": doc}, default=str) + "\n")
+                res = self.db.agents.delete_many(
+                    {"author": {"$in": self.ids["user_strs"] + self.ids["user_ids"]}}
+                )
+                result.steps.append({"name": "mongo_agents", "count": res.deleted_count})
             res = self.db.users.delete_many({"_id": {"$in": self.ids["user_ids"]}})
             result.steps.append({"name": "mongo_users", "count": res.deleted_count})
 
@@ -190,17 +201,19 @@ class Purge:
     def _delete_vectors(self) -> None:
         """rag_api authorises deletion per owner, so group file ids by their user."""
         users = {u["index"]: u for u in self.ledger.get("users", [])}
-        groups: dict[Any, list[str]] = {}
+        groups: dict[Any, list[tuple[str, Any]]] = {}
         for entry in self.ledger.get("files", []):
-            groups.setdefault(entry.get("user_index"), []).append(entry["file_id"])
+            key = (entry.get("user_index"), entry.get("entity_id"))
+            groups.setdefault(key, []).append(entry["file_id"])
 
-        def delete(ids: list[str], token: str) -> None:
+        def delete(ids: list[str], token: str, entity_id: str | None = None) -> None:
             if not ids or not token:
                 return
             try:
                 httpx.request(
                     "DELETE",
                     f"{self.cfg.target.rag_url.rstrip('/')}/documents",
+                    params={"entity_id": entity_id} if entity_id else None,
                     json=ids,
                     headers={"Authorization": f"Bearer {token}", "User-Agent": UA},
                     timeout=90,
@@ -208,14 +221,14 @@ class Purge:
             except httpx.HTTPError:
                 pass
 
-        for user_index, ids in groups.items():
+        for (user_index, entity_id), ids in groups.items():
             if user_index is None:
                 continue
             user = users.get(user_index)
             if user:
-                delete(ids, self._login(user["email"], user["password"]))
+                delete(ids, self._login(user["email"], user["password"]), entity_id)
         # legacy ledgers without an owner: try each user's token
-        leftovers = groups.get(None, [])
+        leftovers = [fid for (u, _e), ids in groups.items() if u is None for fid in ids]
         if leftovers:
             for user in users.values():
                 delete(leftovers, self._login(user["email"], user["password"]))
@@ -268,6 +281,12 @@ class Purge:
         out: dict[str, Any] = {}
         user_ids = self.ids["user_ids"]
         if user_ids:
+            try:
+                out["mongo_agents"] = self.db.agents.count_documents(
+                    {"author": {"$in": self.ids["user_strs"] + user_ids}}
+                )
+            except Exception:
+                out["mongo_agents"] = 0
             try:
                 out["mongo_users"] = self.db.users.count_documents({"_id": {"$in": user_ids}})
             except Exception:

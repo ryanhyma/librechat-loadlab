@@ -1,0 +1,20 @@
+{
+  "name": "scale200",
+  "users": 200,
+  "ramp_s": 12,
+  "duration_s": 20,
+  "think_ms": 250,
+  "mix": {
+    "chatty": {"weight": 5, "turns": 3, "think_ms": 250, "prompt": "Reply with one short sentence."},
+    "reader": {"weight": 2, "think_ms": 200},
+    "search": {"weight": 1, "think_ms": 200},
+    "rag": {"weight": 1, "think_ms": 200, "file_kb": 8},
+    "double_tap": {"weight": 1, "think_ms": 200},
+    "broken": {"weight": 1, "think_ms": 200}
+  },
+  "target": {"endpoint": "loadlabstub", "model": "loadlab-stub"},
+  "probe_meili": true,
+  "probe_rag": true,
+  "slo_p95_ms": 5000,
+  "max_error_rate": 0.10
+}

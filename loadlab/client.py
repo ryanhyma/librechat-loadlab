@@ -56,6 +56,7 @@ class LibreChatClient:
         endpoint: str = "local27b",
         model: str = "qwen3.6-27b",
         endpoint_type: str = "custom",
+        agent_id: str | None = None,
         timeout: float = 180.0,
         turn_timeout: float = 180.0,
         idle_timeout: float = 20.0,
@@ -65,6 +66,7 @@ class LibreChatClient:
         self.endpoint = endpoint
         self.model = model
         self.endpoint_type = endpoint_type
+        self.agent_id = agent_id
         self.turn_timeout = turn_timeout
         self.idle_timeout = idle_timeout
         self.http = httpx.AsyncClient(
@@ -115,9 +117,13 @@ class LibreChatClient:
             "isRegenerate": False,
             "error": False,
         }
+        if self.agent_id:
+            payload["agent_id"] = self.agent_id
+            payload["endpointType"] = "agents"
         t0 = time.perf_counter()
+        path = "/api/agents/chat" if self.agent_id else f"/api/agents/chat/{self.endpoint}"
         try:
-            r = await self.http.post(f"/api/agents/chat/{self.endpoint}", json=payload, headers=self.auth)
+            r = await self.http.post(path, json=payload, headers=self.auth)
         except httpx.HTTPError as exc:
             turn.total_ms = (time.perf_counter() - t0) * 1000
             turn.error_class, turn.detail = "stream_disconnect", f"post failed: {exc}"[:300]
@@ -207,8 +213,9 @@ class LibreChatClient:
         turn.events += 1
         now = (time.perf_counter() - t0) * 1000
         if event_name == "error":
-            turn.error_class = "sse_error"
-            turn.detail = str(payload.get("message") if isinstance(payload, dict) else payload)[:300]
+            detail = str(payload.get("message") if isinstance(payload, dict) else payload)
+            turn.error_class = errs._upstream_class(detail) or "sse_error"
+            turn.detail = detail[:300]
             return True
         if not isinstance(payload, dict):
             return False
@@ -281,6 +288,42 @@ class LibreChatClient:
         }
         r = await self.http.post("/api/files", files=files, data=data, headers=self.auth)
         return r.status_code, _json(r)
+
+    async def upload_bad(self, filename: str, content: bytes) -> tuple[int, Any]:
+        """Deliberately invalid upload (non-UUID file_id) — exercises the 500 path."""
+        r = await self.http.post(
+            "/api/files",
+            files={"file": (filename, content, "text/plain")},
+            data={"endpoint": self.endpoint, "file_id": "not-a-uuid"},
+            headers=self.auth,
+        )
+        return r.status_code, _json(r)
+
+    async def provider_probe(self, provider_url: str, model: str, api_key: str = "") -> ProbeResult:
+        """Call the model tier directly (Azure/LiteLLM/Strata) — 429 lives here, not in SSE."""
+        t0 = time.perf_counter()
+        try:
+            r = await self.http.post(
+                f"{provider_url.rstrip('/')}/chat/completions",
+                json={"model": model, "messages": [{"role": "user", "content": "ping"}], "stream": False, "max_tokens": 8},
+                headers={"Authorization": f"Bearer {api_key or 'loadlab'}"},
+                timeout=30,
+            )
+        except httpx.HTTPError as exc:
+            return ProbeResult(False, "provider", error_class="probe_error", detail=str(exc)[:200])
+        latency = (time.perf_counter() - t0) * 1000
+        body = _json(r)
+        if r.status_code >= 400:
+            cls, _, detail = errs.classify_http(r.status_code, body)
+            if r.status_code == 429:
+                cls = "provider_429"
+            elif r.status_code == 503:
+                cls = "provider_unavailable"
+            retry = r.headers.get("retry-after")
+            if retry:
+                detail = f"retry-after={retry}s {detail}"
+            return ProbeResult(False, "provider", latency, cls, detail)
+        return ProbeResult(True, "provider", latency, "ok", "")
 
     async def rag_embed(self, file_id: str, filename: str, content: bytes) -> ProbeResult:
         """Talk to rag_api directly: ingestion is where 429/401/500 actually originate."""

@@ -20,6 +20,11 @@ reports as success).
 
 Every error carries a class + limiter label, is aggregated live, and is written to the run report.
 
+## Setup
+
+Full instructions for both runtimes: **[docs/setup.md](docs/setup.md)** — container (dev) and native
+Windows venv (production). Short version below.
+
 ## Quick start (dev box)
 
 ```bash
@@ -77,16 +82,25 @@ On Windows use e.g. `LOADLAB_RESTART_CMD="powershell -c Restart-Service LibreCha
 If a restart window is unacceptable, run without it: expect 429s at `MESSAGE_IP_MAX`/min and read
 `probe` mode results instead.
 
-## Windows install (no containers)
+## Container
 
-```powershell
-.\scripts\install-windows.ps1 -InstallDir C:\loadlab -PythonExe C:\Python312\python.exe
+```bash
+cp .env.example .env         # set LibreChat/Mongo/Meili/pg URLs + keys
+docker compose up -d --build # dashboard :8090, stub LLM :8099
 ```
 
-Creates a venv, installs requirements, writes `%ProgramData%\loadlab\loadlab.env`, and registers a
-service with NSSM (or prints the `sc.exe` equivalent). Set there: `LOADLAB_BASE_URL`,
-`LOADLAB_MONGO_URI`, `LOADLAB_MEILI_URL`, `LOADLAB_MEILI_KEY`, `LOADLAB_RAG_URL`,
-`LOADLAB_METRICS_SECRET`, `LOADLAB_UPLOADS_DIR`, `LOADLAB_PG_DSN`.
+## Windows (native, no containers)
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+copy .env.example "$env:ProgramData\loadlab\loadlab.env"
+$env:LOADLAB_ENV_FILE="$env:ProgramData\loadlab\loadlab.env"
+.\.venv\Scripts\python.exe -m loadlab.cli serve --host 0.0.0.0 --port 8090
+```
+
+Or `scripts\install-windows.ps1` to create the venv, config and an NSSM service. See
+[docs/setup.md](docs/setup.md) for the service, firewall, `env apply/restore` and troubleshooting.
 
 ## Layout
 

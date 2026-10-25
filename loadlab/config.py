@@ -28,8 +28,11 @@ def _load_dotenv(path: Path) -> None:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        if key in ("MEILI_MASTER_KEY", "METRICS_SECRET", "JWT_SECRET") and key not in os.environ:
-            os.environ[key] = value.strip().strip('"')
+        key, value = key.strip(), value.strip().strip('"').strip("'")
+        if key.startswith("LOADLAB_") and key not in os.environ:
+            os.environ[key] = value
+        elif key in ("MEILI_MASTER_KEY", "METRICS_SECRET", "JWT_SECRET") and key not in os.environ:
+            os.environ[key] = value
 
 
 _load_dotenv(Path(os.environ.get("LOADLAB_ENV_FILE", str(HOME / "dev/librechat/.env"))))
@@ -53,6 +56,11 @@ class Target(BaseModel):
     pg_dsn: str = _env(
         "LOADLAB_PG_DSN", "postgresql://myuser:mypassword@172.18.0.2:5432/mydatabase"
     )
+    provider_url: str = _env("LOADLAB_PROVIDER_URL", "")
+    provider_interval_s: float = float(_env("LOADLAB_PROVIDER_INTERVAL_S", "5"))
+    provider_key: str = _env("LOADLAB_PROVIDER_KEY", "")
+    llm_metrics_url: str = _env("LOADLAB_LLM_METRICS_URL", "")
+    llm_metrics_key: str = _env("LOADLAB_LLM_METRICS_KEY", _env("LOADLAB_LITELLM_KEY", ""))
     endpoint: str = "local27b"
     model: str = "qwen3.6-27b"
     endpoint_type: Literal["custom", "agents"] = "custom"

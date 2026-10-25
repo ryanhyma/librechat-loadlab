@@ -35,6 +35,14 @@ def test_final_terminal_states():
     assert cls == "stream_reconcile" and reason == "generation_replaced"
 
 
+def test_upstream_429_and_503_are_not_confused_with_local_limiters():
+    cls, _, _ = errs.classify_final({"terminalStatus": "error", "error": {"message": "Error code: 429 - rate limit reached for gpt-4o"}})
+    assert cls == "provider_429"
+    cls, _, _ = errs.classify_final({"terminalStatus": "error", "error": {"message": "503 no slot available"}})
+    assert cls == "provider_unavailable"
+    assert errs.classify_final({"terminalStatus": "error", "error": {"message": "boom"}})[0] == "stream_terminal_error"
+
+
 def test_mcp_and_rag_silent_markers():
     assert errs.is_mcp_tool_error("Error: [list_templates] tool call failed: timeout")
     assert not errs.is_mcp_tool_error("all good")

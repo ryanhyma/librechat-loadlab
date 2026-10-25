@@ -29,6 +29,8 @@ LABELS: dict[str, str] = {
     "stream_reconcile": "terminal reconcile",
     "abort": "aborted",
     "mcp_tool_error": "MCP tool returned error",
+    "provider_429": "upstream 429 (Azure/TPM/quota)",
+    "provider_unavailable": "upstream 503 unavailable",
     "silent_meili": "Meili index lag (silent)",
     "silent_rag": "RAG query swallowed (silent)",
     "probe_error": "probe failed",
@@ -87,6 +89,28 @@ def classify_http(status: int, body: Any = None) -> tuple[str, str | None, str]:
     return "unknown", None, detail
 
 
+PROVIDER_429_HINTS = (
+    "429",
+    "rate limit",
+    "rate_limit",
+    "too many requests",
+    "tokens per minute",
+    "tpm",
+    "quota",
+    "retry after",
+)
+PROVIDER_503_HINTS = ("503", "unavailable", "no slot available", "model is loading")
+
+
+def _upstream_class(text: str) -> str | None:
+    lowered = (text or "").lower()
+    if any(hint in lowered for hint in PROVIDER_429_HINTS):
+        return "provider_429"
+    if any(hint in lowered for hint in PROVIDER_503_HINTS):
+        return "provider_unavailable"
+    return None
+
+
 def classify_final(payload: dict[str, Any]) -> tuple[str, str | None, str]:
     """Classify a terminal `final` SSE payload."""
     status = payload.get("terminalStatus")
@@ -102,7 +126,7 @@ def classify_final(payload: dict[str, Any]) -> tuple[str, str | None, str]:
     if payload.get("reconcile"):
         return "stream_reconcile", str(payload.get("reconcileReason") or ""), detail
     if status == "error" or response.get("error"):
-        return "stream_terminal_error", None, detail
+        return _upstream_class(detail) or "stream_terminal_error", None, detail
     if status == "aborted" or payload.get("aborted"):
         return "abort", None, detail
     return "ok", None, detail

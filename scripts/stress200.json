@@ -1,0 +1,36 @@
+{
+  "name": "stress200",
+  "users": 200,
+  "ramp_s": 12,
+  "duration_s": 15,
+  "think_ms": 250,
+  "mix": {
+    "chatty": {
+      "weight": 6,
+      "turns": 3,
+      "think_ms": 250,
+      "prompt": "Reply with one short sentence."
+    },
+    "reader": {
+      "weight": 2,
+      "think_ms": 200
+    },
+    "search": {
+      "weight": 1,
+      "think_ms": 200
+    }
+  },
+  "target": {
+    "endpoint": "litellm",
+    "model": "loadlab-tight",
+    "provider_url": "http://127.0.0.1:4000/v1",
+    "provider_interval_s": 3,
+    "llm_metrics_url": "http://127.0.0.1:4000/metrics",
+    "llm_metrics_key": "REDACTED",
+    "provider_key": "REDACTED"
+  },
+  "probe_meili": false,
+  "probe_rag": false,
+  "slo_p95_ms": 5000,
+  "max_error_rate": 0.2
+}

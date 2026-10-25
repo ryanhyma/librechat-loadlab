@@ -134,6 +134,18 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const fmt = (v) => (v === null || v === undefined ? "—" : v);
+const LABELS = {
+  limiter_concurrent:"one message at a time (429)", limiter_message_ip:"message/IP 429",
+  limiter_message_user:"message/user 429", limiter_upload:"upload 429", limiter_login:"login 429",
+  limiter_register:"register 429", limiter_tool:"tool 429", limiter_generic:"other limiter 429",
+  provider_429:"UPSTREAM 429", provider_unavailable:"upstream 503", validation:"bad request 400",
+  auth:"auth 401/403", server:"server 5xx", sse_error:"stream error event",
+  stream_terminal_error:"generation failed", stream_reconcile:"reconcile", abort:"aborted",
+  stream_stall:"stream stalled", stream_disconnect:"stream died", mcp_tool_error:"MCP tool error",
+  silent_meili:"Meili index lag", silent_rag:"RAG silent failure", probe_error:"probe failed",
+  ok:"ok", unknown:"unknown",
+};
+const label = (code) => LABELS[code] ? `${LABELS[code]} · ${code}` : code;
 let running = false;
 const history = [];
 
@@ -211,10 +223,10 @@ function render(s) {
   tiles(s);
   table("actions", Object.entries(s.by_action||{}).map(([k,v])=>({action:k,...v})),
         ["action","count","errors","p50_ms","p95_ms","ttft_p95_ms"]);
-  table("classes", Object.entries(s.errors_by_class||{}).map(([k,v])=>({c:k,n:v})), ["c","n"]);
+  table("classes", Object.entries(s.errors_by_class||{}).map(([k,v])=>({c:label(k),n:v})), ["c","n"]);
   table("limiters", Object.entries(s.errors_by_limiter||{}).map(([k,v])=>({c:k,n:v})), ["c","n"]);
   table("probes", (s.probes||[]).slice(-15).reverse(), ["kind","ok","latency_ms","error_class","detail"]);
-  table("errors", (s.recent_errors||[]).slice(-15).reverse(), ["action","error_class","limiter","detail"]);
+  table("errors", (s.recent_errors||[]).slice(-15).reverse().map(e=>({...e, error_class:label(e.error_class)})), ["action","error_class","limiter","detail"]);
   history.push({ rps: s.totals?.rps_10s||0, p95: (s.by_action?.chat?.p95_ms)||0 });
   if (history.length > 120) history.shift();
   draw();

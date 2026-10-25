@@ -28,6 +28,7 @@ def build(cfg: RunConfig, store: Store) -> dict[str, Any]:
         "server": snap["server"],
         "db": snap["db"],
         "recent_errors": snap["recent_errors"],
+        "gateway": _gateway_delta(store),
     }
 
 
@@ -38,6 +39,18 @@ def write(cfg: RunConfig, store: Store, ledger_dir: Path) -> Path:
     path = ledger_dir / "report.md"
     path.write_text(md)
     return path
+
+
+def _gateway_delta(store: Store) -> dict[str, Any]:
+    rows = [r for r in store.server if "llm_requests" in r]
+    if len(rows) < 2:
+        return {}
+    first, last = rows[0], rows[-1]
+    return {
+        "requests": round(last["llm_requests"] - first["llm_requests"], 0),
+        "failed_429": round(last["llm_failed_429"] - first["llm_failed_429"], 0),
+        "failed_other": round(last["llm_failed_other"] - first["llm_failed_other"], 0),
+    }
 
 
 def markdown(data: dict[str, Any]) -> str:
@@ -80,6 +93,10 @@ def markdown(data: dict[str, Any]) -> str:
         lines += ["", "## Errors by limiter", ""]
         for lim, n in data["errors_by_limiter"].items():
             lines.append(f"- `{lim}`: {n}")
+    if data.get("gateway"):
+        g = data["gateway"]
+        lines += ["", "## Gateway (LiteLLM)", "",
+                  f"- requests: {g['requests']} · failed 429: {g['failed_429']} · other failures: {g['failed_other']}"]
     lines += ["", "## Silent-failure probes", ""]
     if data["probes"]:
         lines.append("| probe | ok | latency ms | class | detail |")

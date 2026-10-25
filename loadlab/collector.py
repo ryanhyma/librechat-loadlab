@@ -61,7 +61,8 @@ class Collector:
         async with httpx.AsyncClient(timeout=10.0, headers={"User-Agent": UA}) as http:
             while not stop.is_set():
                 await asyncio.gather(
-                    self._host(), self._metrics(http), self._db(), return_exceptions=True
+                    self._host(), self._metrics(http), self._db(), self._llm_metrics(http),
+                    return_exceptions=True,
                 )
                 try:
                     await asyncio.wait_for(stop.wait(), timeout=2.0)
@@ -76,6 +77,33 @@ class Collector:
                 "mem": round(psutil.virtual_memory().percent, 1),
                 "disk": round(psutil.disk_usage("/").percent, 1),
             }
+        )
+
+    async def _llm_metrics(self, http: httpx.AsyncClient) -> None:
+        """Gateway (LiteLLM) counters: the only place a provider 429 is counted per status."""
+        if not self.cfg.target.llm_metrics_url:
+            return
+        headers = {}
+        if self.cfg.target.llm_metrics_key:
+            headers["Authorization"] = f"Bearer {self.cfg.target.llm_metrics_key}"
+        try:
+            r = await http.get(self.cfg.target.llm_metrics_url, headers=headers, follow_redirects=True)
+        except httpx.HTTPError:
+            return
+        if r.status_code != 200:
+            return
+        failed_429 = failed_other = total = 0.0
+        for line in r.text.splitlines():
+            if line.startswith("litellm_proxy_failed_requests_metric_total{"):
+                value = float(line.rsplit(" ", 1)[1])
+                if 'exception_status="429"' in line:
+                    failed_429 += value
+                else:
+                    failed_other += value
+            elif line.startswith("litellm_proxy_total_requests_metric_total{"):
+                total += float(line.rsplit(" ", 1)[1])
+        self.store.server.append(
+            {"t": time.time(), "llm_requests": total, "llm_failed_429": failed_429, "llm_failed_other": failed_other}
         )
 
     async def _metrics(self, http: httpx.AsyncClient) -> None:

@@ -1,0 +1,4 @@
+{"name":"azure429one","users":1,"ramp_s":0,"duration_s":45,"think_ms":200,
+ "mix":{"chatty":{"weight":1,"turns":5,"think_ms":200,"prompt":"Reply with one short sentence."}},
+ "target":{"endpoint":"loadlabstub","model":"loadlab-stub"},
+ "probe_meili":false,"probe_rag":false,"slo_p95_ms":5000,"max_error_rate":0.2}
